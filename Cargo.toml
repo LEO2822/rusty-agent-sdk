@@ -2,6 +2,10 @@
 name = "rusty-agent-sdk"
 version = "0.1.0"
 edition = "2024"
+description = "Rust-powered Python SDK for OpenAI-compatible text generation and streaming"
+license = "Apache-2.0"
+repository = "https://github.com/LEO2822/rusty-agent-sdk"
+authors = ["Mangesh Kashid <mtkashid7@gmail.com>"]
 
 [lib]
 name = "rusty_agent_sdk"

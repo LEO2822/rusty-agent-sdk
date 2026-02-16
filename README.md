@@ -1,18 +1,14 @@
 # rusty-agent-sdk
 
-`rusty-agent-sdk` is a Rust-powered Python SDK for OpenAI-compatible text generation APIs.
-It provides:
+[![PyPI](https://img.shields.io/pypi/v/rusty-agent-sdk)](https://pypi.org/project/rusty-agent-sdk/)
+[![License](https://img.shields.io/pypi/l/rusty-agent-sdk)](LICENSE)
 
-- `generate_text(...)` for blocking single-response generation
-- `stream_text(...)` for Server-Sent Events (SSE) token streaming
-- `Provider(...)` for API key and endpoint configuration
+Rust-powered Python SDK for OpenAI-compatible text generation and streaming.
 
 ## Installation
 
-Build and install locally with maturin:
-
 ```bash
-uv run maturin develop
+pip install rusty-agent-sdk
 ```
 
 ## Quick Start
@@ -26,26 +22,46 @@ export OPENROUTER_API_KEY="your-key"
 Then use the SDK:
 
 ```python
-from rusty_agent_sdk import Provider, generate_text, stream_text
+from rusty_agent_sdk import Provider
 
-provider = Provider()
+provider = Provider("openai/gpt-4o-mini")
 
-text = generate_text(provider, "openai/gpt-4o-mini", "Say hello in one sentence.")
+# Blocking generation
+text = provider.generate_text("Say hello in one sentence.")
 print(text)
 
-for chunk in stream_text(provider, "openai/gpt-4o-mini", "Count to 3."):
+# Streaming
+for chunk in provider.stream_text("Count to 3."):
     print(chunk, end="", flush=True)
 print()
 ```
 
-## Example Script
+## Custom Endpoint
 
-See `/Users/a2954/Library/CloudStorage/OneDrive-JMRInfotechIndia(P)Ltd/Code/weekend-projects/rusty-agent-sdk/examples/basic_usage.py` for a runnable end-to-end example.
+```python
+provider = Provider(
+    "gpt-4o-mini",
+    api_key="sk-...",
+    base_url="https://api.openai.com/v1",
+)
+```
 
-## Development Checks
+## Example
+
+See [examples/basic_usage.py](examples/basic_usage.py) for a runnable demo.
+
+## Development
 
 ```bash
+# Build and install locally
+uv run maturin develop
+
+# Run checks
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
+
+## License
+
+Apache 2.0

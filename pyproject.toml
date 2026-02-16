@@ -4,11 +4,15 @@ build-backend = "maturin"
 
 [project]
 name = "rusty-agent-sdk"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Rust-powered Python SDK for OpenAI-compatible text generation and streaming"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
+authors = [
+    { name = "Mangesh Kashid", email = "mtkashid7@gmail.com" },
+]
+keywords = ["llm", "openai", "rust", "streaming", "openrouter", "sdk", "pyo3"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -21,8 +25,16 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
 ]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/LEO2822/rusty-agent-sdk"
+Repository = "https://github.com/LEO2822/rusty-agent-sdk"
+Issues = "https://github.com/LEO2822/rusty-agent-sdk/issues"
 
 [dependency-groups]
 dev = [
