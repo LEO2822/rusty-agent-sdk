@@ -23,3 +23,7 @@ wheels/
 .vscode/
 *.swp
 *.swo
+
+# Agent / Tooling
+CLAUDE.md
+.ruff_cache/
