@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+*.so
+*.dylib
+*.pyd
+
+# Virtual environments
+.venv
+
+# Rust
+/target
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
