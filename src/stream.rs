@@ -43,17 +43,14 @@ impl TextStream {
     }
 }
 
-/// Stream text from an LLM, returning an iterator that yields chunks in
-/// real time.
-#[pyfunction]
-#[pyo3(text_signature = "(provider, model, prompt)")]
-pub fn stream_text(provider: &Provider, model: &str, prompt: &str) -> PyResult<TextStream> {
+/// Core streaming logic, called by `Provider.stream_text()`.
+pub fn run(provider: &Provider, prompt: &str) -> PyResult<TextStream> {
     let (sender, receiver) = sync_channel::<Result<String, SdkError>>(STREAM_CHANNEL_CAPACITY);
 
     let url = build_chat_completions_url(&provider.base_url);
     let api_key = provider.api_key.clone();
     let body = StreamChatRequest {
-        model: model.to_string(),
+        model: provider.model.clone(),
         messages: vec![ChatMessage {
             role: "user".to_string(),
             content: prompt.to_string(),

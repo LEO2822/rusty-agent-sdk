@@ -3,18 +3,14 @@ use crate::models::{ChatMessage, ChatRequest, api_error_message, parse_chat_resp
 use crate::provider::{Provider, build_chat_completions_url};
 use pyo3::prelude::*;
 
-/// Generate a complete text response from an LLM (blocking).
-///
-/// Sends a single user message to the chat completions endpoint and blocks
-/// until the full response is available.
-#[pyfunction]
-#[pyo3(text_signature = "(provider, model, prompt)")]
-pub fn generate_text(provider: &Provider, model: &str, prompt: &str) -> PyResult<String> {
+/// Core generation logic, called by `Provider.generate_text()`.
+pub fn run(provider: &Provider, prompt: &str) -> PyResult<String> {
     let url = build_chat_completions_url(&provider.base_url);
     let api_key = provider.api_key.clone();
+    let model = provider.model.clone();
 
     let body = ChatRequest {
-        model: model.to_string(),
+        model,
         messages: vec![ChatMessage {
             role: "user".to_string(),
             content: prompt.to_string(),

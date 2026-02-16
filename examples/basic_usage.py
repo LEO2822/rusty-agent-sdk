@@ -1,22 +1,19 @@
+"""Basic usage of the rusty-agent-sdk."""
+
+from __future__ import annotations
+
 from pathlib import Path
 
 from dotenv import load_dotenv
-from rusty_agent_sdk import Provider, stream_text
 
+from rusty_agent_sdk import Provider
 
-def main() -> None:
-    example_dir = Path(__file__).resolve().parent
-    load_dotenv(example_dir / ".env")
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
-    provider = Provider()
-    for chunk in stream_text(
-        provider,
-        "openai/gpt-4o-mini",
-        "What is Rust programming language? Answer in 2 short sentences.",
-    ):
-        print(chunk, end="", flush=True)
-    print()
+provider: Provider = Provider("openai/gpt-4o-mini")
 
-
-if __name__ == "__main__":
-    main()
+for chunk in provider.stream_text(
+    "What is Rust programming language? Answer in 2 short sentences."
+):
+    print(chunk, end="", flush=True)
+print()

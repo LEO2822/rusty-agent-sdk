@@ -10,9 +10,8 @@ mod models;
 mod provider;
 mod stream;
 
-pub use generate::generate_text;
 pub use provider::Provider;
-pub use stream::{TextStream, stream_text};
+pub use stream::TextStream;
 
 #[doc(hidden)]
 pub mod internal {
@@ -22,12 +21,6 @@ pub mod internal {
 
 #[pymodule]
 mod rusty_agent_sdk {
-    #[pymodule_export]
-    use super::generate_text;
-
-    #[pymodule_export]
-    use super::stream_text;
-
     #[pymodule_export]
     use super::Provider;
 

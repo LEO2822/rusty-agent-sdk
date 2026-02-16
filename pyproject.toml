@@ -30,5 +30,11 @@ dev = [
     "python-dotenv>=1.2.1",
 ]
 
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "src/**/*.rs" },
+]
 [tool.maturin]
 features = ["pyo3/extension-module"]
