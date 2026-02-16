@@ -15,6 +15,9 @@ wheels/
 # Rust
 /target
 
+# Environment
+.env
+
 # IDE
 .idea/
 .vscode/
