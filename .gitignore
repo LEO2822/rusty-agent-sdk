@@ -27,3 +27,4 @@ wheels/
 # Agent / Tooling
 CLAUDE.md
 .ruff_cache/
+AGENTS.md
