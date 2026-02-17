@@ -1,4 +1,11 @@
-"""Rusty Agent SDK — a Rust-powered Python SDK for LLM text generation.
+"""Rusty Agent SDK -- a Rust-powered Python SDK for LLM text generation.
+
+Provides blocking and streaming text generation via any OpenAI-compatible
+API endpoint. See the ``docs/`` directory for detailed guides:
+
+- ``docs/api-reference.md`` -- complete class and method reference
+- ``docs/configuration.md`` -- provider setup and environment variables
+- ``docs/examples.md`` -- usage patterns and recipes
 
 Typical usage::
 
@@ -60,6 +67,10 @@ class GenerateResult:
 
     Wraps the generated text along with token usage statistics and metadata
     returned by the API.
+
+    Calling ``str()`` on this object returns the ``text`` property, so a
+    ``GenerateResult`` can be used anywhere a plain string is expected
+    (e.g., ``print(result)`` prints the generated text).
     """
 
     @property
@@ -101,6 +112,13 @@ class Provider:
     Holds the model, API key, and base URL needed to authenticate and route
     requests to any OpenAI-compatible chat completions endpoint.
 
+    By default, requests are sent to OpenRouter
+    (``https://openrouter.ai/api/v1``) and the API key is read from the
+    ``OPENROUTER_API_KEY`` environment variable. Use the ``api_key`` and
+    ``base_url`` keyword arguments or the provider preset classmethods
+    (:meth:`openai`, :meth:`anthropic`, :meth:`openrouter`) to target a
+    different endpoint.
+
     Examples:
         Using the environment variable (recommended)::
 
@@ -133,11 +151,13 @@ class Provider:
 
         Args:
             model: Model identifier, e.g. ``"openai/gpt-4o-mini"``.
-            api_key: API key. Defaults to ``OPENROUTER_API_KEY`` env var.
+            api_key: API key. If ``None``, falls back to the
+                ``OPENROUTER_API_KEY`` environment variable.
             base_url: Base URL. Defaults to ``"https://openrouter.ai/api/v1"``.
 
         Raises:
-            ValueError: If no API key is available.
+            ValueError: If no API key is provided and the
+                ``OPENROUTER_API_KEY`` environment variable is not set.
         """
         ...
 
@@ -145,12 +165,20 @@ class Provider:
     def openai(cls, model: str, *, api_key: str | None = None) -> Provider:
         """Create a Provider configured for the OpenAI API.
 
+        Sets the base URL to ``https://api.openai.com/v1``. If ``api_key``
+        is not provided, the ``OPENAI_API_KEY`` environment variable is used.
+
         Args:
             model: Model identifier, e.g. ``"gpt-4o-mini"``.
-            api_key: API key. Defaults to ``OPENAI_API_KEY`` env var.
+            api_key: API key. If ``None``, falls back to the
+                ``OPENAI_API_KEY`` environment variable.
 
         Returns:
             A configured :class:`Provider` instance.
+
+        Raises:
+            ValueError: If no API key is provided and ``OPENAI_API_KEY``
+                is not set.
         """
         ...
 
@@ -158,12 +186,21 @@ class Provider:
     def anthropic(cls, model: str, *, api_key: str | None = None) -> Provider:
         """Create a Provider configured for the Anthropic API.
 
+        Sets the base URL to ``https://api.anthropic.com/v1``. If ``api_key``
+        is not provided, the ``ANTHROPIC_API_KEY`` environment variable is
+        used.
+
         Args:
             model: Model identifier, e.g. ``"claude-sonnet-4-20250514"``.
-            api_key: API key. Defaults to ``ANTHROPIC_API_KEY`` env var.
+            api_key: API key. If ``None``, falls back to the
+                ``ANTHROPIC_API_KEY`` environment variable.
 
         Returns:
             A configured :class:`Provider` instance.
+
+        Raises:
+            ValueError: If no API key is provided and ``ANTHROPIC_API_KEY``
+                is not set.
         """
         ...
 
@@ -171,12 +208,21 @@ class Provider:
     def openrouter(cls, model: str, *, api_key: str | None = None) -> Provider:
         """Create a Provider configured for the OpenRouter API.
 
+        Sets the base URL to ``https://openrouter.ai/api/v1``. If ``api_key``
+        is not provided, the ``OPENROUTER_API_KEY`` environment variable is
+        used. This is equivalent to the default constructor.
+
         Args:
             model: Model identifier, e.g. ``"openai/gpt-4o-mini"``.
-            api_key: API key. Defaults to ``OPENROUTER_API_KEY`` env var.
+            api_key: API key. If ``None``, falls back to the
+                ``OPENROUTER_API_KEY`` environment variable.
 
         Returns:
             A configured :class:`Provider` instance.
+
+        Raises:
+            ValueError: If no API key is provided and ``OPENROUTER_API_KEY``
+                is not set.
         """
         ...
 
@@ -244,13 +290,18 @@ class Provider:
     ) -> str | GenerateResult:
         """Generate a complete text response (blocking).
 
+        Sends a chat completion request and waits for the full response.
+
+        Note: When both ``prompt`` and ``messages`` are provided,
+        ``messages`` takes priority and ``prompt`` is ignored.
+
         Args:
             prompt: The user message to send (shorthand for a single user
-                message). When ``messages`` is also provided, ``prompt`` is
-                ignored.
+                message).
             system_prompt: Optional system prompt, prepended to the messages.
             messages: Full conversation history as a list of
-                ``{"role": ..., "content": ...}`` dicts.
+                ``{"role": ..., "content": ...}`` dicts. When provided,
+                ``prompt`` is ignored.
             temperature: Sampling temperature (0-2). Default: 1.
             max_tokens: Maximum tokens to generate.
             top_p: Nucleus sampling threshold (0-1). Default: 1.
@@ -297,6 +348,9 @@ class Provider:
 
         Accepts the same parameters as :meth:`generate_text`.
 
+        Note: When both ``prompt`` and ``messages`` are provided,
+        ``messages`` takes priority and ``prompt`` is ignored.
+
         When ``include_usage=True``, token usage statistics and metadata
         will be available on the returned :class:`TextStream` after iteration
         completes (via properties like ``prompt_tokens``, ``completion_tokens``,
@@ -317,37 +371,53 @@ class Provider:
 class TextStream:
     """An iterator that yields text chunks from a streaming LLM response.
 
-    You do not construct this directly — it is returned by
+    You do not construct this directly -- it is returned by
     :meth:`Provider.stream_text`.
 
     When ``include_usage=True`` was passed to :meth:`Provider.stream_text`,
     token usage statistics and metadata are available as properties after
-    the stream has been fully consumed.
+    the stream has been fully consumed. Before the stream is fully consumed,
+    all metadata properties return ``None``.
     """
 
     @property
     def prompt_tokens(self) -> int | None:
-        """Number of tokens in the prompt, or ``None`` if not available."""
+        """Number of tokens in the prompt, or ``None`` if not available.
+
+        Returns ``None`` until the stream is fully consumed.
+        """
         ...
 
     @property
     def completion_tokens(self) -> int | None:
-        """Number of tokens in the completion, or ``None`` if not available."""
+        """Number of tokens in the completion, or ``None`` if not available.
+
+        Returns ``None`` until the stream is fully consumed.
+        """
         ...
 
     @property
     def total_tokens(self) -> int | None:
-        """Total tokens used (prompt + completion), or ``None`` if not available."""
+        """Total tokens used (prompt + completion), or ``None`` if not available.
+
+        Returns ``None`` until the stream is fully consumed.
+        """
         ...
 
     @property
     def finish_reason(self) -> str | None:
-        """The reason the model stopped generating, or ``None`` if not available."""
+        """The reason the model stopped generating, or ``None`` if not available.
+
+        Returns ``None`` until the stream is fully consumed.
+        """
         ...
 
     @property
     def model(self) -> str | None:
-        """The model that was used, as reported by the API."""
+        """The model that was used, as reported by the API.
+
+        Returns ``None`` until the stream is fully consumed.
+        """
         ...
 
     def __iter__(self) -> TextStream: ...
