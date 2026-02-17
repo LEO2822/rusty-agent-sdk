@@ -4,7 +4,6 @@
 
 use pyo3::prelude::*;
 
-mod embed;
 mod errors;
 mod generate;
 mod http;
@@ -12,15 +11,14 @@ mod models;
 mod provider;
 mod stream;
 
-pub use provider::{EmbeddingResult, GenerateResult, Provider};
+pub use provider::{GenerateResult, Provider};
 pub use stream::TextStream;
 
 #[doc(hidden)]
 pub mod internal {
     pub use crate::models::{
-        ChatMessage, ChatRequest, EmbeddingResultData, EmbeddingUsage, GenerationParams,
-        ParsedChatResult, StreamEvent, StreamMetadata, Usage, api_error_message,
-        parse_chat_response, parse_chat_response_full, parse_embedding_response, parse_sse_event,
+        ChatMessage, ChatRequest, GenerationParams, ParsedChatResult, StreamEvent, StreamMetadata,
+        Usage, api_error_message, parse_chat_response, parse_chat_response_full, parse_sse_event,
         parse_sse_line,
     };
     pub use crate::provider::{
@@ -30,9 +28,6 @@ pub mod internal {
 
 #[pymodule]
 mod rusty_agent_sdk {
-    #[pymodule_export]
-    use super::EmbeddingResult;
-
     #[pymodule_export]
     use super::GenerateResult;
 

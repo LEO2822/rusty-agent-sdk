@@ -47,19 +47,13 @@ Typical usage::
     anthropic_provider = Provider.anthropic("claude-sonnet-4-20250514")
     openrouter_provider = Provider.openrouter("openai/gpt-4o-mini")
 
-    # Embeddings
-    result = provider.embed("Hello, world!")
-    print(result.embeddings)
-
-    result = provider.embed_many(["Hello", "World"])
-    print(result.embeddings)
 """
 
 from __future__ import annotations
 
 from typing import Any, Literal, overload
 
-__all__ = ["Provider", "TextStream", "GenerateResult", "EmbeddingResult"]
+__all__ = ["Provider", "TextStream", "GenerateResult"]
 
 class GenerateResult:
     """Result from a text generation call when ``include_usage=True``.
@@ -99,34 +93,6 @@ class GenerateResult:
         ...
 
     def __str__(self) -> str: ...
-    def __repr__(self) -> str: ...
-
-class EmbeddingResult:
-    """Result from an embedding call.
-
-    Contains the embedding vectors and optional token usage statistics.
-    """
-
-    @property
-    def embeddings(self) -> list[list[float]]:
-        """List of embedding vectors, one per input text."""
-        ...
-
-    @property
-    def prompt_tokens(self) -> int | None:
-        """Number of tokens in the input, or ``None`` if not reported."""
-        ...
-
-    @property
-    def total_tokens(self) -> int | None:
-        """Total tokens used, or ``None`` if not reported."""
-        ...
-
-    @property
-    def model(self) -> str | None:
-        """The model that was used for embedding, as reported by the API."""
-        ...
-
     def __repr__(self) -> str: ...
 
 class Provider:
@@ -343,37 +309,6 @@ class Provider:
             ConnectionError: If the initial HTTP connection fails.
             RuntimeError: If the API returns a non-2xx status code.
             ValueError: If neither prompt nor messages is provided.
-        """
-        ...
-
-    def embed(self, text: str) -> EmbeddingResult:
-        """Generate an embedding for a single text input.
-
-        Args:
-            text: The text to embed.
-
-        Returns:
-            An :class:`EmbeddingResult` containing the embedding vector.
-
-        Raises:
-            ConnectionError: If the HTTP request fails.
-            RuntimeError: If the API returns a non-2xx status code.
-        """
-        ...
-
-    def embed_many(self, texts: list[str]) -> EmbeddingResult:
-        """Generate embeddings for multiple text inputs in a single request.
-
-        Args:
-            texts: A list of texts to embed.
-
-        Returns:
-            An :class:`EmbeddingResult` containing embedding vectors
-            (one per input text).
-
-        Raises:
-            ConnectionError: If the HTTP request fails.
-            RuntimeError: If the API returns a non-2xx status code.
         """
         ...
 

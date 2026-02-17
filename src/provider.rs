@@ -1,10 +1,6 @@
-use crate::embed;
 use crate::errors::SdkError;
 use crate::generate;
-use crate::models::{
-    ChatMessage, EmbeddingInput, EmbeddingResultData, EmbeddingUsage, GenerationParams,
-    ParsedChatResult, Usage,
-};
+use crate::models::{ChatMessage, GenerationParams, ParsedChatResult, Usage};
 use crate::stream::{self, TextStream};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyList, PyString};
@@ -82,59 +78,6 @@ impl GenerateResult {
     }
 }
 
-// ---------------------------------------------------------------------------
-// EmbeddingResult pyclass
-// ---------------------------------------------------------------------------
-
-#[pyclass(skip_from_py_object)]
-#[derive(Clone)]
-pub struct EmbeddingResult {
-    embeddings: Vec<Vec<f64>>,
-    usage: Option<EmbeddingUsage>,
-    model: Option<String>,
-}
-
-#[pymethods]
-impl EmbeddingResult {
-    #[getter]
-    fn embeddings(&self) -> Vec<Vec<f64>> {
-        self.embeddings.clone()
-    }
-
-    #[getter]
-    fn prompt_tokens(&self) -> Option<u64> {
-        self.usage.as_ref().map(|u| u.prompt_tokens)
-    }
-
-    #[getter]
-    fn total_tokens(&self) -> Option<u64> {
-        self.usage.as_ref().map(|u| u.total_tokens)
-    }
-
-    #[getter]
-    fn model(&self) -> Option<&str> {
-        self.model.as_deref()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "EmbeddingResult(count={}, prompt_tokens={:?})",
-            self.embeddings.len(),
-            self.usage.as_ref().map(|u| u.prompt_tokens),
-        )
-    }
-}
-
-impl EmbeddingResult {
-    fn from_data(data: EmbeddingResultData) -> Self {
-        Self {
-            embeddings: data.embeddings,
-            usage: data.usage,
-            model: data.model,
-        }
-    }
-}
-
 pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 60;
 pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
@@ -149,11 +92,6 @@ const RETRY_BACKOFF_ENV: &str = "RUSTY_AGENT_RETRY_BACKOFF_MS";
 /// Build a normalized chat completions URL from the configured provider base URL.
 pub fn build_chat_completions_url(base_url: &str) -> String {
     format!("{}/chat/completions", base_url.trim_end_matches('/'))
-}
-
-/// Build a normalized embeddings URL from the configured provider base URL.
-pub fn build_embeddings_url(base_url: &str) -> String {
-    format!("{}/embeddings", base_url.trim_end_matches('/'))
 }
 
 pub fn resolve_provider_values(
@@ -589,34 +527,6 @@ impl Provider {
         } else {
             stream::run(self, params)
         }
-    }
-
-    /// Generate embeddings for a single text input.
-    ///
-    /// Args:
-    ///     text (str): The text to embed.
-    ///
-    /// Returns:
-    ///     EmbeddingResult: Contains the embedding vector and usage metadata.
-    #[pyo3(signature = (text))]
-    #[pyo3(text_signature = "(self, text)")]
-    fn embed(&self, text: String) -> PyResult<EmbeddingResult> {
-        let data = embed::run(self, EmbeddingInput::Single(text))?;
-        Ok(EmbeddingResult::from_data(data))
-    }
-
-    /// Generate embeddings for multiple text inputs in a single request.
-    ///
-    /// Args:
-    ///     texts (list[str]): The texts to embed.
-    ///
-    /// Returns:
-    ///     EmbeddingResult: Contains the embedding vectors (one per input) and usage metadata.
-    #[pyo3(signature = (texts))]
-    #[pyo3(text_signature = "(self, texts)")]
-    fn embed_many(&self, texts: Vec<String>) -> PyResult<EmbeddingResult> {
-        let data = embed::run(self, EmbeddingInput::Multiple(texts))?;
-        Ok(EmbeddingResult::from_data(data))
     }
 
     /// Create a Provider pre-configured for OpenAI's API.
