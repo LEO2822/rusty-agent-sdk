@@ -37,9 +37,8 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist
+          args: --release --out dist --zig
           manylinux: auto
-          zig: true
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
@@ -60,9 +59,8 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist
+          args: --release --out dist --zig
           manylinux: musllinux_1_2
-          zig: true
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
