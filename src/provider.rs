@@ -1,11 +1,139 @@
+use crate::embed;
 use crate::errors::SdkError;
 use crate::generate;
-use crate::models::{ChatMessage, GenerationParams};
+use crate::models::{
+    ChatMessage, EmbeddingInput, EmbeddingResultData, EmbeddingUsage, GenerationParams,
+    ParsedChatResult, Usage,
+};
 use crate::stream::{self, TextStream};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyList, PyString};
 use serde_json::Value;
 use std::time::Duration;
+
+// ---------------------------------------------------------------------------
+// GenerateResult pyclass
+// ---------------------------------------------------------------------------
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct GenerateResult {
+    text: String,
+    usage: Option<Usage>,
+    finish_reason: Option<String>,
+    model: Option<String>,
+}
+
+#[pymethods]
+impl GenerateResult {
+    #[getter]
+    fn text(&self) -> &str {
+        &self.text
+    }
+
+    #[getter]
+    fn prompt_tokens(&self) -> Option<u64> {
+        self.usage.as_ref().map(|u| u.prompt_tokens)
+    }
+
+    #[getter]
+    fn completion_tokens(&self) -> Option<u64> {
+        self.usage.as_ref().map(|u| u.completion_tokens)
+    }
+
+    #[getter]
+    fn total_tokens(&self) -> Option<u64> {
+        self.usage.as_ref().map(|u| u.total_tokens)
+    }
+
+    #[getter]
+    fn finish_reason(&self) -> Option<&str> {
+        self.finish_reason.as_deref()
+    }
+
+    #[getter]
+    fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    fn __str__(&self) -> &str {
+        &self.text
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "GenerateResult(text='{}...', finish_reason={:?}, prompt_tokens={:?}, completion_tokens={:?})",
+            &self.text.chars().take(50).collect::<String>(),
+            self.finish_reason,
+            self.usage.as_ref().map(|u| u.prompt_tokens),
+            self.usage.as_ref().map(|u| u.completion_tokens),
+        )
+    }
+}
+
+impl GenerateResult {
+    pub fn from_parsed(result: ParsedChatResult) -> Self {
+        Self {
+            text: result.text,
+            usage: result.usage,
+            finish_reason: result.finish_reason,
+            model: result.model,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EmbeddingResult pyclass
+// ---------------------------------------------------------------------------
+
+#[pyclass(skip_from_py_object)]
+#[derive(Clone)]
+pub struct EmbeddingResult {
+    embeddings: Vec<Vec<f64>>,
+    usage: Option<EmbeddingUsage>,
+    model: Option<String>,
+}
+
+#[pymethods]
+impl EmbeddingResult {
+    #[getter]
+    fn embeddings(&self) -> Vec<Vec<f64>> {
+        self.embeddings.clone()
+    }
+
+    #[getter]
+    fn prompt_tokens(&self) -> Option<u64> {
+        self.usage.as_ref().map(|u| u.prompt_tokens)
+    }
+
+    #[getter]
+    fn total_tokens(&self) -> Option<u64> {
+        self.usage.as_ref().map(|u| u.total_tokens)
+    }
+
+    #[getter]
+    fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EmbeddingResult(count={}, prompt_tokens={:?})",
+            self.embeddings.len(),
+            self.usage.as_ref().map(|u| u.prompt_tokens),
+        )
+    }
+}
+
+impl EmbeddingResult {
+    fn from_data(data: EmbeddingResultData) -> Self {
+        Self {
+            embeddings: data.embeddings,
+            usage: data.usage,
+            model: data.model,
+        }
+    }
+}
 
 pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
 pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 60;
@@ -21,6 +149,11 @@ const RETRY_BACKOFF_ENV: &str = "RUSTY_AGENT_RETRY_BACKOFF_MS";
 /// Build a normalized chat completions URL from the configured provider base URL.
 pub fn build_chat_completions_url(base_url: &str) -> String {
     format!("{}/chat/completions", base_url.trim_end_matches('/'))
+}
+
+/// Build a normalized embeddings URL from the configured provider base URL.
+pub fn build_embeddings_url(base_url: &str) -> String {
+    format!("{}/embeddings", base_url.trim_end_matches('/'))
 }
 
 pub fn resolve_provider_values(
@@ -345,12 +478,14 @@ impl Provider {
         presence_penalty = None,
         seed = None,
         response_format = None,
+        include_usage = false,
     ))]
     #[pyo3(
-        text_signature = "(self, prompt=None, *, system_prompt=None, messages=None, temperature=None, max_tokens=None, top_p=None, stop=None, frequency_penalty=None, presence_penalty=None, seed=None, response_format=None)"
+        text_signature = "(self, prompt=None, *, system_prompt=None, messages=None, temperature=None, max_tokens=None, top_p=None, stop=None, frequency_penalty=None, presence_penalty=None, seed=None, response_format=None, include_usage=False)"
     )]
     fn generate_text(
         &self,
+        py: Python<'_>,
         prompt: Option<&str>,
         system_prompt: Option<&str>,
         messages: Option<&Bound<'_, PyList>>,
@@ -362,7 +497,8 @@ impl Provider {
         presence_penalty: Option<f64>,
         seed: Option<i64>,
         response_format: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<String> {
+        include_usage: bool,
+    ) -> PyResult<Py<PyAny>> {
         let params = build_generation_params(
             prompt,
             system_prompt,
@@ -376,7 +512,17 @@ impl Provider {
             seed,
             response_format,
         )?;
-        generate::run(self, params)
+
+        if include_usage {
+            let result = generate::run_full(self, params)?;
+            Ok(GenerateResult::from_parsed(result)
+                .into_pyobject(py)?
+                .into_any()
+                .unbind())
+        } else {
+            let text = generate::run(self, params)?;
+            Ok(text.into_pyobject(py)?.into_any().unbind())
+        }
     }
 
     /// Stream text from the LLM, returning an iterator of chunks.
@@ -404,9 +550,10 @@ impl Provider {
         presence_penalty = None,
         seed = None,
         response_format = None,
+        include_usage = false,
     ))]
     #[pyo3(
-        text_signature = "(self, prompt=None, *, system_prompt=None, messages=None, temperature=None, max_tokens=None, top_p=None, stop=None, frequency_penalty=None, presence_penalty=None, seed=None, response_format=None)"
+        text_signature = "(self, prompt=None, *, system_prompt=None, messages=None, temperature=None, max_tokens=None, top_p=None, stop=None, frequency_penalty=None, presence_penalty=None, seed=None, response_format=None, include_usage=False)"
     )]
     fn stream_text(
         &self,
@@ -421,6 +568,7 @@ impl Provider {
         presence_penalty: Option<f64>,
         seed: Option<i64>,
         response_format: Option<&Bound<'_, PyAny>>,
+        include_usage: bool,
     ) -> PyResult<TextStream> {
         let params = build_generation_params(
             prompt,
@@ -435,7 +583,103 @@ impl Provider {
             seed,
             response_format,
         )?;
-        stream::run(self, params)
+
+        if include_usage {
+            stream::run_with_metadata(self, params)
+        } else {
+            stream::run(self, params)
+        }
+    }
+
+    /// Generate embeddings for a single text input.
+    ///
+    /// Args:
+    ///     text (str): The text to embed.
+    ///
+    /// Returns:
+    ///     EmbeddingResult: Contains the embedding vector and usage metadata.
+    #[pyo3(signature = (text))]
+    #[pyo3(text_signature = "(self, text)")]
+    fn embed(&self, text: String) -> PyResult<EmbeddingResult> {
+        let data = embed::run(self, EmbeddingInput::Single(text))?;
+        Ok(EmbeddingResult::from_data(data))
+    }
+
+    /// Generate embeddings for multiple text inputs in a single request.
+    ///
+    /// Args:
+    ///     texts (list[str]): The texts to embed.
+    ///
+    /// Returns:
+    ///     EmbeddingResult: Contains the embedding vectors (one per input) and usage metadata.
+    #[pyo3(signature = (texts))]
+    #[pyo3(text_signature = "(self, texts)")]
+    fn embed_many(&self, texts: Vec<String>) -> PyResult<EmbeddingResult> {
+        let data = embed::run(self, EmbeddingInput::Multiple(texts))?;
+        Ok(EmbeddingResult::from_data(data))
+    }
+
+    /// Create a Provider pre-configured for OpenAI's API.
+    ///
+    /// Args:
+    ///     model (str): Model identifier, e.g. ``"gpt-4o-mini"``.
+    ///     api_key (str | None): API key. Defaults to ``OPENAI_API_KEY`` env var.
+    #[classmethod]
+    #[pyo3(signature = (model, *, api_key=None))]
+    #[pyo3(text_signature = "(model, *, api_key=None)")]
+    fn openai(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        model: String,
+        api_key: Option<String>,
+    ) -> PyResult<Self> {
+        Self::from_preset(
+            model,
+            api_key,
+            "https://api.openai.com/v1",
+            "OPENAI_API_KEY",
+        )
+    }
+
+    /// Create a Provider pre-configured for Anthropic's API.
+    ///
+    /// Args:
+    ///     model (str): Model identifier, e.g. ``"claude-sonnet-4-5-20250514"``.
+    ///     api_key (str | None): API key. Defaults to ``ANTHROPIC_API_KEY`` env var.
+    #[classmethod]
+    #[pyo3(signature = (model, *, api_key=None))]
+    #[pyo3(text_signature = "(model, *, api_key=None)")]
+    fn anthropic(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        model: String,
+        api_key: Option<String>,
+    ) -> PyResult<Self> {
+        Self::from_preset(
+            model,
+            api_key,
+            "https://api.anthropic.com/v1",
+            "ANTHROPIC_API_KEY",
+        )
+    }
+
+    /// Create a Provider pre-configured for OpenRouter's API.
+    ///
+    /// Args:
+    ///     model (str): Model identifier, e.g. ``"openai/gpt-4o-mini"``.
+    ///     api_key (str | None): API key. Defaults to ``OPENROUTER_API_KEY`` env var.
+    #[classmethod]
+    #[pyo3(signature = (model, *, api_key=None))]
+    #[pyo3(text_signature = "(model, *, api_key=None)")]
+    fn openrouter(
+        _cls: &Bound<'_, pyo3::types::PyType>,
+        model: String,
+        api_key: Option<String>,
+    ) -> PyResult<Self> {
+        Self::from_preset(
+            model,
+            api_key,
+            "https://openrouter.ai/api/v1",
+            "OPENROUTER_API_KEY",
+        )
     }
 
     fn __repr__(&self) -> String {
@@ -443,5 +687,43 @@ impl Provider {
             "Provider(model='{}', base_url='{}')",
             self.model, self.base_url
         )
+    }
+}
+
+impl Provider {
+    fn from_preset(
+        model: String,
+        api_key: Option<String>,
+        base_url: &str,
+        env_var: &str,
+    ) -> PyResult<Self> {
+        let env_api_key = std::env::var(env_var).ok();
+        let (api_key, base_url) =
+            resolve_provider_values(api_key, Some(base_url.to_string()), env_api_key).map_err(
+                |_| {
+                    SdkError::value(format!(
+                        "No api_key provided and {} environment variable is not set.",
+                        env_var
+                    ))
+                    .into_pyerr()
+                },
+            )?;
+        let runtime_config = resolve_runtime_config(
+            std::env::var(REQUEST_TIMEOUT_ENV).ok(),
+            std::env::var(CONNECT_TIMEOUT_ENV).ok(),
+            std::env::var(MAX_RETRIES_ENV).ok(),
+            std::env::var(RETRY_BACKOFF_ENV).ok(),
+        )
+        .map_err(SdkError::into_pyerr)?;
+
+        Ok(Self {
+            api_key,
+            base_url,
+            model,
+            request_timeout: runtime_config.request_timeout,
+            connect_timeout: runtime_config.connect_timeout,
+            max_retries: runtime_config.max_retries,
+            retry_backoff: runtime_config.retry_backoff,
+        })
     }
 }

@@ -1,5 +1,7 @@
 use reqwest::StatusCode;
-use rusty_agent_sdk::internal::{api_error_message, parse_chat_response};
+use rusty_agent_sdk::internal::{
+    Usage, api_error_message, parse_chat_response, parse_chat_response_full,
+};
 
 #[test]
 fn parse_chat_response_returns_first_choice_content() {
@@ -44,4 +46,63 @@ fn api_error_message_falls_back_to_raw_body() {
     let message = api_error_message(StatusCode::BAD_GATEWAY, body);
 
     assert_eq!(message, "API error (502 Bad Gateway): upstream unavailable");
+}
+
+// ---------------------------------------------------------------------------
+// parse_chat_response_full tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_chat_response_full_extracts_all_fields() {
+    let body = r#"{
+        "choices": [{"message": {"content": "Hello!"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        "model": "gpt-4"
+    }"#;
+
+    let result = parse_chat_response_full(body).expect("should parse full response");
+
+    assert_eq!(result.text, "Hello!");
+    assert_eq!(result.finish_reason, Some("stop".to_string()));
+    assert_eq!(result.model, Some("gpt-4".to_string()));
+
+    let usage = result.usage.expect("usage should be present");
+    assert_eq!(
+        usage,
+        Usage {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+        }
+    );
+}
+
+#[test]
+fn parse_chat_response_full_with_missing_optional_fields() {
+    let body = r#"{"choices": [{"message": {"content": "Hi"}}]}"#;
+
+    let result = parse_chat_response_full(body).expect("should parse without optionals");
+
+    assert_eq!(result.text, "Hi");
+    assert!(result.usage.is_none());
+    assert!(result.finish_reason.is_none());
+    assert!(result.model.is_none());
+}
+
+#[test]
+fn parse_chat_response_full_fails_on_empty_choices() {
+    let body = r#"{"choices": []}"#;
+
+    let err = parse_chat_response_full(body).expect_err("empty choices should fail");
+    let msg = format!("{:?}", err);
+
+    assert!(msg.contains("No choices returned"));
+}
+
+#[test]
+fn parse_chat_response_full_fails_on_invalid_json() {
+    let err = parse_chat_response_full("not-json").expect_err("invalid json should fail");
+    let msg = format!("{:?}", err);
+
+    assert!(msg.contains("Failed to parse response"));
 }

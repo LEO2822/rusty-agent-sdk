@@ -36,13 +36,98 @@ Typical usage::
         "List 3 colors as JSON",
         response_format={"type": "json_object"},
     )
+
+    # Usage tracking
+    result = provider.generate_text("Hello!", include_usage=True)
+    print(result.text)
+    print(result.prompt_tokens, result.completion_tokens, result.total_tokens)
+
+    # Convenience constructors
+    openai_provider = Provider.openai("gpt-4o-mini", api_key="sk-...")
+    anthropic_provider = Provider.anthropic("claude-sonnet-4-20250514")
+    openrouter_provider = Provider.openrouter("openai/gpt-4o-mini")
+
+    # Embeddings
+    result = provider.embed("Hello, world!")
+    print(result.embeddings)
+
+    result = provider.embed_many(["Hello", "World"])
+    print(result.embeddings)
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, overload
 
-__all__ = ["Provider", "TextStream"]
+__all__ = ["Provider", "TextStream", "GenerateResult", "EmbeddingResult"]
+
+class GenerateResult:
+    """Result from a text generation call when ``include_usage=True``.
+
+    Wraps the generated text along with token usage statistics and metadata
+    returned by the API.
+    """
+
+    @property
+    def text(self) -> str:
+        """The model's complete text response."""
+        ...
+
+    @property
+    def prompt_tokens(self) -> int | None:
+        """Number of tokens in the prompt, or ``None`` if not reported."""
+        ...
+
+    @property
+    def completion_tokens(self) -> int | None:
+        """Number of tokens in the completion, or ``None`` if not reported."""
+        ...
+
+    @property
+    def total_tokens(self) -> int | None:
+        """Total tokens used (prompt + completion), or ``None`` if not reported."""
+        ...
+
+    @property
+    def finish_reason(self) -> str | None:
+        """The reason the model stopped generating, e.g. ``"stop"`` or ``"length"``."""
+        ...
+
+    @property
+    def model(self) -> str | None:
+        """The model that was used for generation, as reported by the API."""
+        ...
+
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
+class EmbeddingResult:
+    """Result from an embedding call.
+
+    Contains the embedding vectors and optional token usage statistics.
+    """
+
+    @property
+    def embeddings(self) -> list[list[float]]:
+        """List of embedding vectors, one per input text."""
+        ...
+
+    @property
+    def prompt_tokens(self) -> int | None:
+        """Number of tokens in the input, or ``None`` if not reported."""
+        ...
+
+    @property
+    def total_tokens(self) -> int | None:
+        """Total tokens used, or ``None`` if not reported."""
+        ...
+
+    @property
+    def model(self) -> str | None:
+        """The model that was used for embedding, as reported by the API."""
+        ...
+
+    def __repr__(self) -> str: ...
 
 class Provider:
     """Configuration for an OpenAI-compatible LLM API provider.
@@ -63,6 +148,12 @@ class Provider:
                 api_key="sk-...",
                 base_url="https://api.openai.com/v1",
             )
+
+        Using convenience constructors::
+
+            provider = Provider.openai("gpt-4o-mini", api_key="sk-...")
+            provider = Provider.anthropic("claude-sonnet-4-20250514")
+            provider = Provider.openrouter("openai/gpt-4o-mini")
     """
 
     def __init__(
@@ -84,6 +175,46 @@ class Provider:
         """
         ...
 
+    @classmethod
+    def openai(cls, model: str, *, api_key: str | None = None) -> Provider:
+        """Create a Provider configured for the OpenAI API.
+
+        Args:
+            model: Model identifier, e.g. ``"gpt-4o-mini"``.
+            api_key: API key. Defaults to ``OPENAI_API_KEY`` env var.
+
+        Returns:
+            A configured :class:`Provider` instance.
+        """
+        ...
+
+    @classmethod
+    def anthropic(cls, model: str, *, api_key: str | None = None) -> Provider:
+        """Create a Provider configured for the Anthropic API.
+
+        Args:
+            model: Model identifier, e.g. ``"claude-sonnet-4-20250514"``.
+            api_key: API key. Defaults to ``ANTHROPIC_API_KEY`` env var.
+
+        Returns:
+            A configured :class:`Provider` instance.
+        """
+        ...
+
+    @classmethod
+    def openrouter(cls, model: str, *, api_key: str | None = None) -> Provider:
+        """Create a Provider configured for the OpenRouter API.
+
+        Args:
+            model: Model identifier, e.g. ``"openai/gpt-4o-mini"``.
+            api_key: API key. Defaults to ``OPENROUTER_API_KEY`` env var.
+
+        Returns:
+            A configured :class:`Provider` instance.
+        """
+        ...
+
+    @overload
     def generate_text(
         self,
         prompt: str | None = None,
@@ -98,7 +229,53 @@ class Provider:
         presence_penalty: float | None = None,
         seed: int | None = None,
         response_format: dict[str, Any] | None = None,
+        include_usage: Literal[False] = ...,
     ) -> str:
+        """Generate a complete text response (blocking).
+
+        Returns ``str`` when ``include_usage`` is ``False`` (the default).
+        """
+        ...
+
+    @overload
+    def generate_text(
+        self,
+        prompt: str | None = None,
+        *,
+        system_prompt: str | None = None,
+        messages: list[dict[str, str]] | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        stop: str | list[str] | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        seed: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        include_usage: Literal[True] = ...,
+    ) -> GenerateResult:
+        """Generate a complete text response (blocking).
+
+        Returns :class:`GenerateResult` when ``include_usage`` is ``True``.
+        """
+        ...
+
+    def generate_text(
+        self,
+        prompt: str | None = None,
+        *,
+        system_prompt: str | None = None,
+        messages: list[dict[str, str]] | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        stop: str | list[str] | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        seed: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        include_usage: bool = False,
+    ) -> str | GenerateResult:
         """Generate a complete text response (blocking).
 
         Args:
@@ -118,9 +295,13 @@ class Provider:
             response_format: Response format, e.g.
                 ``{"type": "json_object"}`` or
                 ``{"type": "json_schema", "json_schema": {...}}``.
+            include_usage: If ``True``, return a :class:`GenerateResult` with
+                token usage statistics instead of a plain string.
 
         Returns:
-            The model's complete text response.
+            The model's complete text response as a ``str`` when
+            ``include_usage=False`` (default), or a :class:`GenerateResult`
+            when ``include_usage=True``.
 
         Raises:
             ConnectionError: If the HTTP request fails.
@@ -144,10 +325,16 @@ class Provider:
         presence_penalty: float | None = None,
         seed: int | None = None,
         response_format: dict[str, Any] | None = None,
+        include_usage: bool = False,
     ) -> TextStream:
         """Stream text from the LLM as an iterator of chunks.
 
         Accepts the same parameters as :meth:`generate_text`.
+
+        When ``include_usage=True``, token usage statistics and metadata
+        will be available on the returned :class:`TextStream` after iteration
+        completes (via properties like ``prompt_tokens``, ``completion_tokens``,
+        etc.).
 
         Returns:
             An iterator yielding ``str`` chunks.
@@ -159,6 +346,37 @@ class Provider:
         """
         ...
 
+    def embed(self, text: str) -> EmbeddingResult:
+        """Generate an embedding for a single text input.
+
+        Args:
+            text: The text to embed.
+
+        Returns:
+            An :class:`EmbeddingResult` containing the embedding vector.
+
+        Raises:
+            ConnectionError: If the HTTP request fails.
+            RuntimeError: If the API returns a non-2xx status code.
+        """
+        ...
+
+    def embed_many(self, texts: list[str]) -> EmbeddingResult:
+        """Generate embeddings for multiple text inputs in a single request.
+
+        Args:
+            texts: A list of texts to embed.
+
+        Returns:
+            An :class:`EmbeddingResult` containing embedding vectors
+            (one per input text).
+
+        Raises:
+            ConnectionError: If the HTTP request fails.
+            RuntimeError: If the API returns a non-2xx status code.
+        """
+        ...
+
     def __repr__(self) -> str: ...
 
 class TextStream:
@@ -166,7 +384,36 @@ class TextStream:
 
     You do not construct this directly — it is returned by
     :meth:`Provider.stream_text`.
+
+    When ``include_usage=True`` was passed to :meth:`Provider.stream_text`,
+    token usage statistics and metadata are available as properties after
+    the stream has been fully consumed.
     """
+
+    @property
+    def prompt_tokens(self) -> int | None:
+        """Number of tokens in the prompt, or ``None`` if not available."""
+        ...
+
+    @property
+    def completion_tokens(self) -> int | None:
+        """Number of tokens in the completion, or ``None`` if not available."""
+        ...
+
+    @property
+    def total_tokens(self) -> int | None:
+        """Total tokens used (prompt + completion), or ``None`` if not available."""
+        ...
+
+    @property
+    def finish_reason(self) -> str | None:
+        """The reason the model stopped generating, or ``None`` if not available."""
+        ...
+
+    @property
+    def model(self) -> str | None:
+        """The model that was used, as reported by the API."""
+        ...
 
     def __iter__(self) -> TextStream: ...
     def __next__(self) -> str: ...

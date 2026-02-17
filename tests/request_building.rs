@@ -92,7 +92,7 @@ fn chat_request_serialization_omits_none_fields() {
         seed: None,
         response_format: None,
     };
-    let req = params.into_chat_request("gpt-4".into(), None);
+    let req = params.into_chat_request("gpt-4".into(), None, None);
     let json = serde_json::to_string(&req).expect("should serialise");
 
     assert!(!json.contains("temperature"));
@@ -101,6 +101,7 @@ fn chat_request_serialization_omits_none_fields() {
     assert!(!json.contains("response_format"));
     assert!(!json.contains("stop"));
     assert!(!json.contains("seed"));
+    assert!(!json.contains("stream_options"));
 
     assert!(json.contains("model"));
     assert!(json.contains("messages"));
@@ -122,7 +123,7 @@ fn chat_request_serialization_includes_set_fields() {
         seed: Some(42),
         response_format: Some(serde_json::json!({"type": "json_object"})),
     };
-    let req = params.into_chat_request("gpt-4".into(), Some(true));
+    let req = params.into_chat_request("gpt-4".into(), Some(true), None);
     let json: serde_json::Value = serde_json::to_value(&req).expect("should serialise");
 
     assert_eq!(json["temperature"], 0.7);
@@ -132,4 +133,51 @@ fn chat_request_serialization_includes_set_fields() {
     assert_eq!(json["response_format"]["type"], "json_object");
     assert!(json.get("top_p").is_none());
     assert!(json.get("frequency_penalty").is_none());
+    assert!(json.get("stream_options").is_none());
+}
+
+#[test]
+fn chat_request_includes_stream_options_when_set() {
+    let params = GenerationParams {
+        messages: vec![ChatMessage {
+            role: "user".into(),
+            content: "Hi".into(),
+        }],
+        temperature: None,
+        max_tokens: None,
+        top_p: None,
+        stop: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        seed: None,
+        response_format: None,
+    };
+    let stream_opts = serde_json::json!({"include_usage": true});
+    let req = params.into_chat_request("gpt-4".into(), Some(true), Some(stream_opts));
+    let json: serde_json::Value = serde_json::to_value(&req).expect("should serialise");
+
+    assert_eq!(json["stream_options"]["include_usage"], true);
+    assert_eq!(json["stream"], true);
+}
+
+#[test]
+fn chat_request_omits_stream_options_when_none() {
+    let params = GenerationParams {
+        messages: vec![ChatMessage {
+            role: "user".into(),
+            content: "Hi".into(),
+        }],
+        temperature: None,
+        max_tokens: None,
+        top_p: None,
+        stop: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        seed: None,
+        response_format: None,
+    };
+    let req = params.into_chat_request("gpt-4".into(), Some(true), None);
+    let json = serde_json::to_string(&req).expect("should serialise");
+
+    assert!(!json.contains("stream_options"));
 }
