@@ -14,9 +14,33 @@ Typical usage::
     # Streaming
     for chunk in provider.stream_text("Hello!"):
         print(chunk, end="", flush=True)
+
+    # Multi-turn conversation
+    response = provider.generate_text(messages=[
+        {"role": "user", "content": "My name is Alice."},
+        {"role": "assistant", "content": "Nice to meet you, Alice!"},
+        {"role": "user", "content": "What is my name?"},
+    ])
+
+    # System prompt
+    response = provider.generate_text(
+        "Tell me a joke",
+        system_prompt="You are a comedian.",
+    )
+
+    # Generation parameters
+    response = provider.generate_text("Hello!", temperature=0.2, max_tokens=100)
+
+    # JSON mode
+    response = provider.generate_text(
+        "List 3 colors as JSON",
+        response_format={"type": "json_object"},
+    )
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 __all__ = ["Provider", "TextStream"]
 
@@ -60,11 +84,40 @@ class Provider:
         """
         ...
 
-    def generate_text(self, prompt: str) -> str:
+    def generate_text(
+        self,
+        prompt: str | None = None,
+        *,
+        system_prompt: str | None = None,
+        messages: list[dict[str, str]] | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        stop: str | list[str] | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        seed: int | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> str:
         """Generate a complete text response (blocking).
 
         Args:
-            prompt: The user message to send.
+            prompt: The user message to send (shorthand for a single user
+                message). When ``messages`` is also provided, ``prompt`` is
+                ignored.
+            system_prompt: Optional system prompt, prepended to the messages.
+            messages: Full conversation history as a list of
+                ``{"role": ..., "content": ...}`` dicts.
+            temperature: Sampling temperature (0-2). Default: 1.
+            max_tokens: Maximum tokens to generate.
+            top_p: Nucleus sampling threshold (0-1). Default: 1.
+            stop: Up to 4 stop sequences (string or list of strings).
+            frequency_penalty: Frequency penalty (-2 to 2). Default: 0.
+            presence_penalty: Presence penalty (-2 to 2). Default: 0.
+            seed: Random seed for deterministic generation.
+            response_format: Response format, e.g.
+                ``{"type": "json_object"}`` or
+                ``{"type": "json_schema", "json_schema": {...}}``.
 
         Returns:
             The model's complete text response.
@@ -72,15 +125,29 @@ class Provider:
         Raises:
             ConnectionError: If the HTTP request fails.
             RuntimeError: If the API returns a non-2xx status code.
-            ValueError: If the response cannot be parsed.
+            ValueError: If the response cannot be parsed, or if neither
+                prompt nor messages is provided.
         """
         ...
 
-    def stream_text(self, prompt: str) -> TextStream:
+    def stream_text(
+        self,
+        prompt: str | None = None,
+        *,
+        system_prompt: str | None = None,
+        messages: list[dict[str, str]] | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        stop: str | list[str] | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        seed: int | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> TextStream:
         """Stream text from the LLM as an iterator of chunks.
 
-        Args:
-            prompt: The user message to send.
+        Accepts the same parameters as :meth:`generate_text`.
 
         Returns:
             An iterator yielding ``str`` chunks.
@@ -88,6 +155,7 @@ class Provider:
         Raises:
             ConnectionError: If the initial HTTP connection fails.
             RuntimeError: If the API returns a non-2xx status code.
+            ValueError: If neither prompt nor messages is provided.
         """
         ...
 

@@ -17,7 +17,8 @@ pub use stream::TextStream;
 #[doc(hidden)]
 pub mod internal {
     pub use crate::models::{
-        StreamEvent, api_error_message, parse_chat_response, parse_sse_event, parse_sse_line,
+        ChatMessage, ChatRequest, GenerationParams, StreamEvent, api_error_message,
+        parse_chat_response, parse_sse_event, parse_sse_line,
     };
     pub use crate::provider::{
         build_chat_completions_url, resolve_provider_values, resolve_runtime_config,

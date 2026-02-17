@@ -1,7 +1,10 @@
 use crate::errors::SdkError;
 use crate::generate;
+use crate::models::{ChatMessage, GenerationParams};
 use crate::stream::{self, TextStream};
 use pyo3::prelude::*;
+use pyo3::types::{PyBool, PyDict, PyFloat, PyList, PyString};
+use serde_json::Value;
 use std::time::Duration;
 
 pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -120,6 +123,107 @@ fn parse_u32_env(value: Option<String>, name: &str, default: u32) -> Result<u32,
     })
 }
 
+// ---------------------------------------------------------------------------
+// Python → Rust conversion helpers
+// ---------------------------------------------------------------------------
+
+/// Recursively convert a Python object to `serde_json::Value`.
+///
+/// PyBool is checked before integer extraction because in Python
+/// `bool` is a subclass of `int`.
+fn py_to_json(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
+    if obj.is_none() {
+        Ok(Value::Null)
+    } else if let Ok(b) = obj.cast::<PyBool>() {
+        Ok(Value::Bool(b.is_true()))
+    } else if let Ok(i) = obj.extract::<i64>() {
+        Ok(Value::from(i))
+    } else if let Ok(f) = obj.cast::<PyFloat>() {
+        let v = f.value();
+        Ok(Value::from(v))
+    } else if let Ok(s) = obj.cast::<PyString>() {
+        Ok(Value::String(s.to_string()))
+    } else if let Ok(list) = obj.cast::<PyList>() {
+        let items: PyResult<Vec<Value>> = list.iter().map(|item| py_to_json(&item)).collect();
+        Ok(Value::Array(items?))
+    } else if let Ok(dict) = obj.cast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in dict.iter() {
+            let key: String = k.extract()?;
+            map.insert(key, py_to_json(&v)?);
+        }
+        Ok(Value::Object(map))
+    } else {
+        Err(SdkError::value(format!(
+            "Cannot convert Python type '{}' to JSON.",
+            obj.get_type().name()?
+        ))
+        .into_pyerr())
+    }
+}
+
+/// Extract a Python list of `{"role": ..., "content": ...}` dicts into `Vec<ChatMessage>`.
+fn extract_messages(py_messages: &Bound<'_, PyList>) -> PyResult<Vec<ChatMessage>> {
+    let mut messages = Vec::with_capacity(py_messages.len());
+    for item in py_messages.iter() {
+        let role: String = item.get_item("role")?.extract()?;
+        let content: String = item.get_item("content")?.extract()?;
+        messages.push(ChatMessage { role, content });
+    }
+    Ok(messages)
+}
+
+/// Convert a Python `str | list[str]` to `serde_json::Value`.
+fn extract_stop(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
+    if let Ok(s) = obj.extract::<String>() {
+        return Ok(Value::String(s));
+    }
+    if let Ok(list) = obj.cast::<PyList>() {
+        let strings: Vec<String> = list.extract()?;
+        return Ok(serde_json::json!(strings));
+    }
+    Err(SdkError::value("'stop' must be a string or list of strings.").into_pyerr())
+}
+
+/// Build `GenerationParams` from Python keyword arguments.
+#[expect(clippy::too_many_arguments)] // mirrors the Python-facing API surface
+fn build_generation_params(
+    prompt: Option<&str>,
+    system_prompt: Option<&str>,
+    messages: Option<&Bound<'_, PyList>>,
+    temperature: Option<f64>,
+    max_tokens: Option<u64>,
+    top_p: Option<f64>,
+    stop: Option<&Bound<'_, PyAny>>,
+    frequency_penalty: Option<f64>,
+    presence_penalty: Option<f64>,
+    seed: Option<i64>,
+    response_format: Option<&Bound<'_, PyAny>>,
+) -> PyResult<GenerationParams> {
+    let raw_messages = messages.map(extract_messages).transpose()?;
+    let stop_val = stop.map(extract_stop).transpose()?;
+    let rf_val = response_format.map(py_to_json).transpose()?;
+
+    let msgs = GenerationParams::build_messages(prompt, system_prompt, raw_messages)
+        .map_err(SdkError::into_pyerr)?;
+
+    Ok(GenerationParams {
+        messages: msgs,
+        temperature,
+        max_tokens,
+        top_p,
+        stop: stop_val,
+        frequency_penalty,
+        presence_penalty,
+        seed,
+        response_format: rf_val,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Provider pyclass
+// ---------------------------------------------------------------------------
+
 /// Configuration for an OpenAI-compatible LLM API provider.
 ///
 /// Holds the API key, base URL, and default model needed to authenticate
@@ -205,7 +309,19 @@ impl Provider {
     /// Generate a complete text response from the LLM (blocking).
     ///
     /// Args:
-    ///     prompt (str): The user message to send to the model.
+    ///     prompt (str | None): The user message to send (shorthand for a
+    ///         single user message).
+    ///     system_prompt (str | None): System prompt, prepended to messages.
+    ///     messages (list[dict] | None): Full conversation history as a
+    ///         list of ``{"role": ..., "content": ...}`` dicts.
+    ///     temperature (float | None): Sampling temperature (0-2).
+    ///     max_tokens (int | None): Maximum tokens to generate.
+    ///     top_p (float | None): Nucleus sampling threshold (0-1).
+    ///     stop (str | list[str] | None): Up to 4 stop sequences.
+    ///     frequency_penalty (float | None): Frequency penalty (-2 to 2).
+    ///     presence_penalty (float | None): Presence penalty (-2 to 2).
+    ///     seed (int | None): Random seed for deterministic generation.
+    ///     response_format (dict | None): Response format configuration.
     ///
     /// Returns:
     ///     str: The model's complete text response.
@@ -213,16 +329,59 @@ impl Provider {
     /// Raises:
     ///     ConnectionError: If the HTTP request fails.
     ///     RuntimeError: If the API returns a non-2xx status code.
-    ///     ValueError: If the response cannot be parsed.
-    #[pyo3(text_signature = "(self, prompt)")]
-    fn generate_text(&self, prompt: &str) -> PyResult<String> {
-        generate::run(self, prompt)
+    ///     ValueError: If the response cannot be parsed, or if neither
+    ///         prompt nor messages is provided.
+    #[expect(clippy::too_many_arguments)] // PyO3 requires flat params for Python kwargs
+    #[pyo3(signature = (
+        prompt = None,
+        *,
+        system_prompt = None,
+        messages = None,
+        temperature = None,
+        max_tokens = None,
+        top_p = None,
+        stop = None,
+        frequency_penalty = None,
+        presence_penalty = None,
+        seed = None,
+        response_format = None,
+    ))]
+    #[pyo3(
+        text_signature = "(self, prompt=None, *, system_prompt=None, messages=None, temperature=None, max_tokens=None, top_p=None, stop=None, frequency_penalty=None, presence_penalty=None, seed=None, response_format=None)"
+    )]
+    fn generate_text(
+        &self,
+        prompt: Option<&str>,
+        system_prompt: Option<&str>,
+        messages: Option<&Bound<'_, PyList>>,
+        temperature: Option<f64>,
+        max_tokens: Option<u64>,
+        top_p: Option<f64>,
+        stop: Option<&Bound<'_, PyAny>>,
+        frequency_penalty: Option<f64>,
+        presence_penalty: Option<f64>,
+        seed: Option<i64>,
+        response_format: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        let params = build_generation_params(
+            prompt,
+            system_prompt,
+            messages,
+            temperature,
+            max_tokens,
+            top_p,
+            stop,
+            frequency_penalty,
+            presence_penalty,
+            seed,
+            response_format,
+        )?;
+        generate::run(self, params)
     }
 
     /// Stream text from the LLM, returning an iterator of chunks.
     ///
-    /// Args:
-    ///     prompt (str): The user message to send to the model.
+    /// Accepts the same parameters as ``generate_text``.
     ///
     /// Returns:
     ///     TextStream: An iterator yielding ``str`` chunks.
@@ -230,9 +389,53 @@ impl Provider {
     /// Raises:
     ///     ConnectionError: If the initial HTTP connection fails.
     ///     RuntimeError: If the API returns a non-2xx status code.
-    #[pyo3(text_signature = "(self, prompt)")]
-    fn stream_text(&self, prompt: &str) -> PyResult<TextStream> {
-        stream::run(self, prompt)
+    ///     ValueError: If neither prompt nor messages is provided.
+    #[expect(clippy::too_many_arguments)] // PyO3 requires flat params for Python kwargs
+    #[pyo3(signature = (
+        prompt = None,
+        *,
+        system_prompt = None,
+        messages = None,
+        temperature = None,
+        max_tokens = None,
+        top_p = None,
+        stop = None,
+        frequency_penalty = None,
+        presence_penalty = None,
+        seed = None,
+        response_format = None,
+    ))]
+    #[pyo3(
+        text_signature = "(self, prompt=None, *, system_prompt=None, messages=None, temperature=None, max_tokens=None, top_p=None, stop=None, frequency_penalty=None, presence_penalty=None, seed=None, response_format=None)"
+    )]
+    fn stream_text(
+        &self,
+        prompt: Option<&str>,
+        system_prompt: Option<&str>,
+        messages: Option<&Bound<'_, PyList>>,
+        temperature: Option<f64>,
+        max_tokens: Option<u64>,
+        top_p: Option<f64>,
+        stop: Option<&Bound<'_, PyAny>>,
+        frequency_penalty: Option<f64>,
+        presence_penalty: Option<f64>,
+        seed: Option<i64>,
+        response_format: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<TextStream> {
+        let params = build_generation_params(
+            prompt,
+            system_prompt,
+            messages,
+            temperature,
+            max_tokens,
+            top_p,
+            stop,
+            frequency_penalty,
+            presence_penalty,
+            seed,
+            response_format,
+        )?;
+        stream::run(self, params)
     }
 
     fn __repr__(&self) -> String {

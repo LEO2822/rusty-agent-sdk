@@ -1,7 +1,7 @@
 use crate::errors::SdkError;
 use crate::http::{is_retryable_error, is_retryable_status, retry_delay};
 use crate::models::{
-    ChatMessage, StreamChatRequest, StreamEvent, api_error_message, parse_sse_event,
+    ChatRequest, GenerationParams, StreamEvent, api_error_message, parse_sse_event,
 };
 use crate::provider::{Provider, build_chat_completions_url};
 use futures_util::StreamExt;
@@ -20,7 +20,7 @@ const STREAM_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(100);
 struct StreamWorkerConfig {
     url: String,
     api_key: String,
-    body: StreamChatRequest,
+    body: ChatRequest,
     request_timeout: Duration,
     connect_timeout: Duration,
     max_retries: u32,
@@ -71,33 +71,22 @@ impl TextStream {
 }
 
 /// Core streaming logic, called by `Provider.stream_text()`.
-pub fn run(provider: &Provider, prompt: &str) -> PyResult<TextStream> {
+pub fn run(provider: &Provider, params: GenerationParams) -> PyResult<TextStream> {
     let (sender, receiver) = sync_channel::<Result<String, SdkError>>(STREAM_CHANNEL_CAPACITY);
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
     let url = build_chat_completions_url(&provider.base_url);
-    let api_key = provider.api_key.clone();
-    let request_timeout = provider.request_timeout;
-    let connect_timeout = provider.connect_timeout;
-    let max_retries = provider.max_retries;
-    let retry_backoff = provider.retry_backoff;
-    let body = StreamChatRequest {
-        model: provider.model.clone(),
-        messages: vec![ChatMessage {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-        }],
-        stream: true,
-    };
+    let body = params.into_chat_request(provider.model.clone(), Some(true));
+
     let thread_cancel_flag = Arc::clone(&cancel_flag);
     let config = StreamWorkerConfig {
         url,
-        api_key,
+        api_key: provider.api_key.clone(),
         body,
-        request_timeout,
-        connect_timeout,
-        max_retries,
-        retry_backoff,
+        request_timeout: provider.request_timeout,
+        connect_timeout: provider.connect_timeout,
+        max_retries: provider.max_retries,
+        retry_backoff: provider.retry_backoff,
         cancel_flag: thread_cancel_flag,
     };
 

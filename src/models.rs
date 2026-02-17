@@ -1,25 +1,127 @@
 use crate::errors::SdkError;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-#[derive(Serialize)]
-pub(crate) struct ChatMessage {
+#[derive(Serialize, Clone, Debug)]
+pub struct ChatMessage {
     pub role: String,
     pub content: String,
 }
 
 #[derive(Serialize)]
-pub(crate) struct ChatRequest {
+pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<Value>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed: Option<i64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<Value>,
 }
 
-#[derive(Serialize)]
-pub(crate) struct StreamChatRequest {
-    pub model: String,
+/// Internal parameters extracted from Python keyword arguments.
+///
+/// This is not a pyclass — it exists to pass generation options from
+/// `Provider` methods to `generate::run` and `stream::run`.
+pub struct GenerationParams {
     pub messages: Vec<ChatMessage>,
-    pub stream: bool,
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<u64>,
+    pub top_p: Option<f64>,
+    pub stop: Option<Value>,
+    pub frequency_penalty: Option<f64>,
+    pub presence_penalty: Option<f64>,
+    pub seed: Option<i64>,
+    pub response_format: Option<Value>,
 }
+
+impl GenerationParams {
+    /// Build the messages list from Python-side inputs.
+    ///
+    /// Priority:
+    /// 1. If `messages` is non-empty, use it. If `system_prompt` is also
+    ///    provided, prepend it as a system message.
+    /// 2. If only `prompt` is provided, create a single user message.
+    ///    If `system_prompt` is also provided, prepend it.
+    /// 3. If neither is provided, return an error.
+    pub fn build_messages(
+        prompt: Option<&str>,
+        system_prompt: Option<&str>,
+        raw_messages: Option<Vec<ChatMessage>>,
+    ) -> Result<Vec<ChatMessage>, SdkError> {
+        let mut messages = Vec::new();
+
+        if let Some(sys) = system_prompt {
+            messages.push(ChatMessage {
+                role: "system".to_string(),
+                content: sys.to_string(),
+            });
+        }
+
+        match (raw_messages, prompt) {
+            (Some(msgs), _) if !msgs.is_empty() => {
+                messages.extend(msgs);
+            }
+            (_, Some(p)) => {
+                messages.push(ChatMessage {
+                    role: "user".to_string(),
+                    content: p.to_string(),
+                });
+            }
+            _ => {
+                return Err(SdkError::value(
+                    "Either 'prompt' or 'messages' must be provided.",
+                ));
+            }
+        }
+
+        Ok(messages)
+    }
+
+    /// Convert into a serialisable `ChatRequest`.
+    pub fn into_chat_request(self, model: String, stream: Option<bool>) -> ChatRequest {
+        ChatRequest {
+            model,
+            messages: self.messages,
+            stream,
+            temperature: self.temperature,
+            max_tokens: self.max_tokens,
+            top_p: self.top_p,
+            stop: self.stop,
+            frequency_penalty: self.frequency_penalty,
+            presence_penalty: self.presence_penalty,
+            seed: self.seed,
+            response_format: self.response_format,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Response parsing (unchanged)
+// ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct ChatChoice {

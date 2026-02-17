@@ -1,12 +1,12 @@
 use crate::errors::SdkError;
 use crate::http::{is_retryable_error, is_retryable_status, retry_delay};
-use crate::models::{ChatMessage, ChatRequest, api_error_message, parse_chat_response};
+use crate::models::{GenerationParams, api_error_message, parse_chat_response};
 use crate::provider::{Provider, build_chat_completions_url};
 use pyo3::prelude::*;
 use tokio::time::sleep;
 
 /// Core generation logic, called by `Provider.generate_text()`.
-pub fn run(provider: &Provider, prompt: &str) -> PyResult<String> {
+pub fn run(provider: &Provider, params: GenerationParams) -> PyResult<String> {
     let url = build_chat_completions_url(&provider.base_url);
     let api_key = provider.api_key.clone();
     let model = provider.model.clone();
@@ -15,13 +15,7 @@ pub fn run(provider: &Provider, prompt: &str) -> PyResult<String> {
     let max_retries = provider.max_retries;
     let retry_backoff = provider.retry_backoff;
 
-    let body = ChatRequest {
-        model,
-        messages: vec![ChatMessage {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-        }],
-    };
+    let body = params.into_chat_request(model, None);
 
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| SdkError::runtime(e.to_string()).into_pyerr())?;
