@@ -133,6 +133,9 @@ impl Provider {
     }
 
     fn __repr__(&self) -> String {
-        format!("Provider(model='{}', base_url='{}')", self.model, self.base_url)
+        format!(
+            "Provider(model='{}', base_url='{}')",
+            self.model, self.base_url
+        )
     }
 }
