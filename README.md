@@ -46,6 +46,17 @@ provider = Provider(
 )
 ```
 
+## Runtime Tuning (Optional)
+
+Without changing code, you can tune networking behavior through environment variables:
+
+```bash
+export RUSTY_AGENT_REQUEST_TIMEOUT_SECS=60
+export RUSTY_AGENT_CONNECT_TIMEOUT_SECS=10
+export RUSTY_AGENT_MAX_RETRIES=2
+export RUSTY_AGENT_RETRY_BACKOFF_MS=250
+```
+
 ## Example
 
 See [examples/basic_usage.py](examples/basic_usage.py) for a runnable demo.

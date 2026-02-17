@@ -2,8 +2,18 @@ use crate::errors::SdkError;
 use crate::generate;
 use crate::stream::{self, TextStream};
 use pyo3::prelude::*;
+use std::time::Duration;
 
 pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
+pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 60;
+pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
+pub const DEFAULT_MAX_RETRIES: u32 = 2;
+pub const DEFAULT_RETRY_BACKOFF_MS: u64 = 250;
+
+const REQUEST_TIMEOUT_ENV: &str = "RUSTY_AGENT_REQUEST_TIMEOUT_SECS";
+const CONNECT_TIMEOUT_ENV: &str = "RUSTY_AGENT_CONNECT_TIMEOUT_SECS";
+const MAX_RETRIES_ENV: &str = "RUSTY_AGENT_MAX_RETRIES";
+const RETRY_BACKOFF_ENV: &str = "RUSTY_AGENT_RETRY_BACKOFF_MS";
 
 /// Build a normalized chat completions URL from the configured provider base URL.
 pub fn build_chat_completions_url(base_url: &str) -> String {
@@ -30,6 +40,84 @@ pub fn resolve_provider_values(
     };
 
     Ok((api_key, base_url))
+}
+
+#[derive(Clone, Debug)]
+pub struct RuntimeConfig {
+    pub request_timeout: Duration,
+    pub connect_timeout: Duration,
+    pub max_retries: u32,
+    pub retry_backoff: Duration,
+}
+
+pub fn resolve_runtime_config(
+    request_timeout_env: Option<String>,
+    connect_timeout_env: Option<String>,
+    max_retries_env: Option<String>,
+    retry_backoff_env: Option<String>,
+) -> Result<RuntimeConfig, SdkError> {
+    let request_timeout_secs = parse_positive_u64_env(
+        request_timeout_env,
+        REQUEST_TIMEOUT_ENV,
+        DEFAULT_REQUEST_TIMEOUT_SECS,
+    )?;
+    let connect_timeout_secs = parse_positive_u64_env(
+        connect_timeout_env,
+        CONNECT_TIMEOUT_ENV,
+        DEFAULT_CONNECT_TIMEOUT_SECS,
+    )?;
+    let retry_backoff_ms = parse_positive_u64_env(
+        retry_backoff_env,
+        RETRY_BACKOFF_ENV,
+        DEFAULT_RETRY_BACKOFF_MS,
+    )?;
+    let max_retries = parse_u32_env(max_retries_env, MAX_RETRIES_ENV, DEFAULT_MAX_RETRIES)?;
+
+    Ok(RuntimeConfig {
+        request_timeout: Duration::from_secs(request_timeout_secs),
+        connect_timeout: Duration::from_secs(connect_timeout_secs),
+        max_retries,
+        retry_backoff: Duration::from_millis(retry_backoff_ms),
+    })
+}
+
+fn parse_positive_u64_env(
+    value: Option<String>,
+    name: &str,
+    default: u64,
+) -> Result<u64, SdkError> {
+    let Some(raw) = value else {
+        return Ok(default);
+    };
+
+    let parsed = raw.parse::<u64>().map_err(|_| {
+        SdkError::value(format!(
+            "{} must be a positive integer, got '{}'.",
+            name, raw
+        ))
+    })?;
+
+    if parsed == 0 {
+        return Err(SdkError::value(format!(
+            "{} must be greater than zero.",
+            name
+        )));
+    }
+
+    Ok(parsed)
+}
+
+fn parse_u32_env(value: Option<String>, name: &str, default: u32) -> Result<u32, SdkError> {
+    let Some(raw) = value else {
+        return Ok(default);
+    };
+
+    raw.parse::<u32>().map_err(|_| {
+        SdkError::value(format!(
+            "{} must be a non-negative integer, got '{}'.",
+            name, raw
+        ))
+    })
 }
 
 /// Configuration for an OpenAI-compatible LLM API provider.
@@ -64,6 +152,10 @@ pub struct Provider {
     pub(crate) api_key: String,
     pub(crate) base_url: String,
     pub(crate) model: String,
+    pub(crate) request_timeout: Duration,
+    pub(crate) connect_timeout: Duration,
+    pub(crate) max_retries: u32,
+    pub(crate) retry_backoff: Duration,
 }
 
 #[pymethods]
@@ -91,11 +183,22 @@ impl Provider {
         let env_api_key = std::env::var("OPENROUTER_API_KEY").ok();
         let (api_key, base_url) = resolve_provider_values(api_key, base_url, env_api_key)
             .map_err(SdkError::into_pyerr)?;
+        let runtime_config = resolve_runtime_config(
+            std::env::var(REQUEST_TIMEOUT_ENV).ok(),
+            std::env::var(CONNECT_TIMEOUT_ENV).ok(),
+            std::env::var(MAX_RETRIES_ENV).ok(),
+            std::env::var(RETRY_BACKOFF_ENV).ok(),
+        )
+        .map_err(SdkError::into_pyerr)?;
 
         Ok(Self {
             api_key,
             base_url,
             model,
+            request_timeout: runtime_config.request_timeout,
+            connect_timeout: runtime_config.connect_timeout,
+            max_retries: runtime_config.max_retries,
+            retry_backoff: runtime_config.retry_backoff,
         })
     }
 

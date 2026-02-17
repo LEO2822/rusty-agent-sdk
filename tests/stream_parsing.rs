@@ -1,4 +1,4 @@
-use rusty_agent_sdk::internal::{StreamEvent, parse_sse_line};
+use rusty_agent_sdk::internal::{StreamEvent, parse_sse_event, parse_sse_line};
 
 #[test]
 fn parse_sse_line_extracts_content_chunk() {
@@ -38,4 +38,18 @@ fn parse_sse_line_returns_error_for_malformed_data_payload() {
     let message = format!("{:?}", err);
 
     assert!(message.contains("Failed to parse streaming response chunk"));
+}
+
+#[test]
+fn parse_sse_event_joins_multiline_data_payload() {
+    let event = "event: message\ndata: {\"choices\":[{\"delta\":\ndata: {\"content\":\"Hi\"}}]}";
+    let parsed = parse_sse_event(event).expect("multiline data should parse");
+    assert_eq!(parsed, StreamEvent::Content("Hi".to_string()));
+}
+
+#[test]
+fn parse_sse_event_ignores_events_without_data_lines() {
+    let event = "id: 1\nevent: ping";
+    let parsed = parse_sse_event(event).expect("event without data should be ignored");
+    assert_eq!(parsed, StreamEvent::Ignore);
 }

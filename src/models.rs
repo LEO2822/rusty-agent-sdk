@@ -88,16 +88,28 @@ pub enum StreamEvent {
 }
 
 pub fn parse_sse_line(line: &str) -> Result<StreamEvent, SdkError> {
-    let trimmed = line.trim_end_matches('\r').trim();
-    if trimmed.is_empty() {
+    let trimmed = line.trim_end_matches('\r');
+    if trimmed.trim().is_empty() {
         return Ok(StreamEvent::Ignore);
     }
 
-    let Some(data) = trimmed.strip_prefix("data:") else {
-        return Ok(StreamEvent::Ignore);
-    };
+    parse_sse_event(trimmed)
+}
 
-    parse_sse_data(data.trim_start())
+pub fn parse_sse_event(event: &str) -> Result<StreamEvent, SdkError> {
+    let mut data_lines = Vec::new();
+    for line in event.lines() {
+        let trimmed = line.trim_end_matches('\r');
+        if let Some(data) = trimmed.strip_prefix("data:") {
+            data_lines.push(data.trim_start());
+        }
+    }
+
+    if data_lines.is_empty() {
+        return Ok(StreamEvent::Ignore);
+    }
+
+    parse_sse_data(&data_lines.join("\n"))
 }
 
 fn parse_sse_data(data: &str) -> Result<StreamEvent, SdkError> {

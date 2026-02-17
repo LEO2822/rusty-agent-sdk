@@ -8,7 +8,8 @@ dynamic = ["version"]
 description = "Rust-powered Python SDK for OpenAI-compatible text generation and streaming"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "Mangesh Kashid", email = "mtkashid7@gmail.com" },
 ]
@@ -27,7 +28,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Typing :: Typed",
 ]
 dependencies = []
 
@@ -48,5 +48,3 @@ cache-keys = [
     { file = "Cargo.toml" },
     { file = "src/**/*.rs" },
 ]
-[tool.maturin]
-features = ["pyo3/extension-module"]

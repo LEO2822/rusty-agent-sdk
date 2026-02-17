@@ -1,4 +1,7 @@
-use rusty_agent_sdk::internal::{build_chat_completions_url, resolve_provider_values};
+use rusty_agent_sdk::internal::{
+    build_chat_completions_url, resolve_provider_values, resolve_runtime_config,
+};
+use std::time::Duration;
 
 #[test]
 fn provider_uses_env_key_when_api_key_not_provided() {
@@ -34,4 +37,41 @@ fn chat_url_builder_normalizes_trailing_slash() {
     let url = build_chat_completions_url("https://openrouter.ai/api/v1/");
 
     assert_eq!(url, "https://openrouter.ai/api/v1/chat/completions");
+}
+
+#[test]
+fn runtime_config_uses_defaults_when_env_is_missing() {
+    let config = resolve_runtime_config(None, None, None, None).expect("config should be valid");
+
+    assert_eq!(config.request_timeout, Duration::from_secs(60));
+    assert_eq!(config.connect_timeout, Duration::from_secs(10));
+    assert_eq!(config.max_retries, 2);
+    assert_eq!(config.retry_backoff, Duration::from_millis(250));
+}
+
+#[test]
+fn runtime_config_reads_env_values() {
+    let config = resolve_runtime_config(
+        Some("90".to_string()),
+        Some("5".to_string()),
+        Some("4".to_string()),
+        Some("500".to_string()),
+    )
+    .expect("config should parse");
+
+    assert_eq!(config.request_timeout, Duration::from_secs(90));
+    assert_eq!(config.connect_timeout, Duration::from_secs(5));
+    assert_eq!(config.max_retries, 4);
+    assert_eq!(config.retry_backoff, Duration::from_millis(500));
+}
+
+#[test]
+fn runtime_config_rejects_invalid_values() {
+    let err = resolve_runtime_config(Some("0".to_string()), None, None, None)
+        .expect_err("request timeout of 0 should fail");
+    assert!(format!("{:?}", err).contains("RUSTY_AGENT_REQUEST_TIMEOUT_SECS"));
+
+    let err = resolve_runtime_config(None, None, Some("bad".to_string()), None)
+        .expect_err("invalid retry count should fail");
+    assert!(format!("{:?}", err).contains("RUSTY_AGENT_MAX_RETRIES"));
 }
