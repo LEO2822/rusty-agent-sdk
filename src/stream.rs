@@ -1,7 +1,7 @@
 use crate::errors::SdkError;
 use crate::http::{is_retryable_error, is_retryable_status, retry_delay};
 use crate::models::{
-    ChatMessage, StreamChatRequest, StreamEvent, api_error_message, parse_sse_event,
+    ChatRequest, GenerationParams, StreamEvent, StreamMetadata, api_error_message, parse_sse_event,
 };
 use crate::provider::{Provider, build_chat_completions_url};
 use futures_util::StreamExt;
@@ -20,12 +20,13 @@ const STREAM_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(100);
 struct StreamWorkerConfig {
     url: String,
     api_key: String,
-    body: StreamChatRequest,
+    body: ChatRequest,
     request_timeout: Duration,
     connect_timeout: Duration,
     max_retries: u32,
     retry_backoff: Duration,
     cancel_flag: Arc<AtomicBool>,
+    metadata: Option<Arc<Mutex<Option<StreamMetadata>>>>,
 }
 
 /// An iterator that yields text chunks from a streaming LLM response.
@@ -34,6 +35,7 @@ pub struct TextStream {
     receiver: Mutex<Receiver<Result<String, SdkError>>>,
     cancel_flag: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
+    metadata: Option<Arc<Mutex<Option<StreamMetadata>>>>,
 }
 
 impl Drop for TextStream {
@@ -68,37 +70,78 @@ impl TextStream {
             Err(_) => None,
         }
     }
+
+    #[getter]
+    fn prompt_tokens(&self) -> Option<u64> {
+        self.flat_metadata(|m| m.usage.as_ref().map(|u| u.prompt_tokens))
+    }
+
+    #[getter]
+    fn completion_tokens(&self) -> Option<u64> {
+        self.flat_metadata(|m| m.usage.as_ref().map(|u| u.completion_tokens))
+    }
+
+    #[getter]
+    fn total_tokens(&self) -> Option<u64> {
+        self.flat_metadata(|m| m.usage.as_ref().map(|u| u.total_tokens))
+    }
+
+    #[getter]
+    fn finish_reason(&self) -> Option<String> {
+        self.flat_metadata(|m| m.finish_reason.clone())
+    }
+
+    #[getter]
+    fn model(&self) -> Option<String> {
+        self.flat_metadata(|m| m.model.clone())
+    }
+}
+
+impl TextStream {
+    fn flat_metadata<T>(&self, f: impl FnOnce(&StreamMetadata) -> Option<T>) -> Option<T> {
+        let meta_arc = self.metadata.as_ref()?;
+        let guard = meta_arc.lock().ok()?;
+        let meta = guard.as_ref()?;
+        f(meta)
+    }
 }
 
 /// Core streaming logic, called by `Provider.stream_text()`.
-pub fn run(provider: &Provider, prompt: &str) -> PyResult<TextStream> {
+pub fn run(provider: &Provider, params: GenerationParams) -> PyResult<TextStream> {
+    let body = params.into_chat_request(provider.model.clone(), Some(true), None);
+    run_internal(provider, body, None)
+}
+
+/// Streaming with metadata tracking, called by `Provider.stream_text(include_usage=True)`.
+pub fn run_with_metadata(provider: &Provider, params: GenerationParams) -> PyResult<TextStream> {
+    let stream_options = Some(serde_json::json!({"include_usage": true}));
+    let body = params.into_chat_request(provider.model.clone(), Some(true), stream_options);
+    let metadata = Arc::new(Mutex::new(None));
+    run_internal(provider, body, Some(metadata))
+}
+
+fn run_internal(
+    provider: &Provider,
+    body: ChatRequest,
+    metadata: Option<Arc<Mutex<Option<StreamMetadata>>>>,
+) -> PyResult<TextStream> {
     let (sender, receiver) = sync_channel::<Result<String, SdkError>>(STREAM_CHANNEL_CAPACITY);
     let cancel_flag = Arc::new(AtomicBool::new(false));
 
     let url = build_chat_completions_url(&provider.base_url);
-    let api_key = provider.api_key.clone();
-    let request_timeout = provider.request_timeout;
-    let connect_timeout = provider.connect_timeout;
-    let max_retries = provider.max_retries;
-    let retry_backoff = provider.retry_backoff;
-    let body = StreamChatRequest {
-        model: provider.model.clone(),
-        messages: vec![ChatMessage {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-        }],
-        stream: true,
-    };
+
     let thread_cancel_flag = Arc::clone(&cancel_flag);
+    let thread_metadata = metadata.clone();
     let config = StreamWorkerConfig {
         url,
-        api_key,
+        api_key: provider.api_key.clone(),
         body,
-        request_timeout,
-        connect_timeout,
-        max_retries,
-        retry_backoff,
+        request_timeout: provider.request_timeout,
+        connect_timeout: provider.connect_timeout,
+        max_retries: provider.max_retries,
+        retry_backoff: provider.retry_backoff,
         cancel_flag: thread_cancel_flag,
+        metadata: thread_metadata,
     };
 
     let handle = std::thread::spawn(move || {
@@ -109,6 +152,7 @@ pub fn run(provider: &Provider, prompt: &str) -> PyResult<TextStream> {
         receiver: Mutex::new(receiver),
         cancel_flag,
         handle: Some(handle),
+        metadata,
     })
 }
 
@@ -131,6 +175,7 @@ fn run_stream_thread(sender: SyncSender<Result<String, SdkError>>, config: Strea
             max_retries,
             retry_backoff,
             cancel_flag,
+            metadata,
         } = config;
 
         let client = match reqwest::Client::builder()
@@ -257,7 +302,7 @@ fn run_stream_thread(sender: SyncSender<Result<String, SdkError>>, config: Strea
 
                 if line.is_empty() {
                     if !event_buffer.is_empty() {
-                        if handle_sse_event(&sender, &event_buffer) {
+                        if handle_sse_event(&sender, &event_buffer, &metadata) {
                             return;
                         }
                         event_buffer.clear();
@@ -281,7 +326,7 @@ fn run_stream_thread(sender: SyncSender<Result<String, SdkError>>, config: Strea
         }
 
         if !event_buffer.trim().is_empty() {
-            let _ = handle_sse_event(&sender, &event_buffer);
+            let _ = handle_sse_event(&sender, &event_buffer, &metadata);
         }
     });
 }
@@ -297,11 +342,36 @@ async fn sleep_with_cancellation(cancel_flag: &AtomicBool, delay: Duration) -> b
     false
 }
 
-fn handle_sse_event(sender: &SyncSender<Result<String, SdkError>>, event: &str) -> bool {
+fn handle_sse_event(
+    sender: &SyncSender<Result<String, SdkError>>,
+    event: &str,
+    metadata: &Option<Arc<Mutex<Option<StreamMetadata>>>>,
+) -> bool {
     match parse_sse_event(event) {
-        Ok(StreamEvent::Done) => true,
-        Ok(StreamEvent::Content(content)) => sender.send(Ok(content)).is_err(),
-        Ok(StreamEvent::Ignore) => false,
+        Ok(events) => {
+            let mut should_stop = false;
+            for ev in events {
+                match ev {
+                    StreamEvent::Done => {
+                        should_stop = true;
+                    }
+                    StreamEvent::Content(content) => {
+                        if sender.send(Ok(content)).is_err() {
+                            should_stop = true;
+                        }
+                    }
+                    StreamEvent::Metadata(meta) => {
+                        if let Some(meta_arc) = metadata
+                            && let Ok(mut guard) = meta_arc.lock()
+                        {
+                            *guard = Some(meta);
+                        }
+                    }
+                    StreamEvent::Ignore => {}
+                }
+            }
+            should_stop
+        }
         Err(err) => {
             let _ = sender.send(Err(err));
             true

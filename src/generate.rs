@@ -1,27 +1,38 @@
 use crate::errors::SdkError;
 use crate::http::{is_retryable_error, is_retryable_status, retry_delay};
-use crate::models::{ChatMessage, ChatRequest, api_error_message, parse_chat_response};
+use crate::models::{
+    GenerationParams, ParsedChatResult, api_error_message, parse_chat_response,
+    parse_chat_response_full,
+};
 use crate::provider::{Provider, build_chat_completions_url};
 use pyo3::prelude::*;
 use tokio::time::sleep;
 
 /// Core generation logic, called by `Provider.generate_text()`.
-pub fn run(provider: &Provider, prompt: &str) -> PyResult<String> {
+pub fn run(provider: &Provider, params: GenerationParams) -> PyResult<String> {
+    let body = params.into_chat_request(provider.model.clone(), None, None);
+    run_request(provider, &body, parse_chat_response)
+}
+
+/// Generation with full metadata, called by `Provider.generate_text(include_usage=True)`.
+pub fn run_full(provider: &Provider, params: GenerationParams) -> PyResult<ParsedChatResult> {
+    let body = params.into_chat_request(provider.model.clone(), None, None);
+    run_request(provider, &body, parse_chat_response_full)
+}
+
+fn run_request<T>(
+    provider: &Provider,
+    body: &crate::models::ChatRequest,
+    parse: impl FnOnce(&str) -> Result<T, SdkError>,
+) -> PyResult<T> {
     let url = build_chat_completions_url(&provider.base_url);
     let api_key = provider.api_key.clone();
-    let model = provider.model.clone();
     let request_timeout = provider.request_timeout;
     let connect_timeout = provider.connect_timeout;
     let max_retries = provider.max_retries;
     let retry_backoff = provider.retry_backoff;
-
-    let body = ChatRequest {
-        model,
-        messages: vec![ChatMessage {
-            role: "user".to_string(),
-            content: prompt.to_string(),
-        }],
-    };
+    let body_json =
+        serde_json::to_value(body).map_err(|e| SdkError::runtime(e.to_string()).into_pyerr())?;
 
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| SdkError::runtime(e.to_string()).into_pyerr())?;
@@ -39,7 +50,7 @@ pub fn run(provider: &Provider, prompt: &str) -> PyResult<String> {
                     .header("Authorization", format!("Bearer {}", api_key))
                     .header("Content-Type", "application/json")
                     .timeout(request_timeout)
-                    .json(&body)
+                    .json(&body_json)
                     .send()
                     .await;
 
@@ -52,7 +63,7 @@ pub fn run(provider: &Provider, prompt: &str) -> PyResult<String> {
                             .map_err(|e| SdkError::runtime(e.to_string()))?;
 
                         if status.is_success() {
-                            return parse_chat_response(&response_text);
+                            return parse(&response_text);
                         }
 
                         if is_retryable_status(status) && attempt < max_retries {

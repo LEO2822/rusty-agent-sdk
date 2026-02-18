@@ -28,3 +28,8 @@ wheels/
 CLAUDE.md
 .ruff_cache/
 AGENTS.md
+
+.agents/
+.claude/
+
+examples/
