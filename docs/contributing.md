@@ -41,14 +41,6 @@ uv run maturin build --release
 
 After any Rust source change, you must re-run `uv run maturin develop` to rebuild the extension module.
 
-## Running Examples
-
-```bash
-uv run examples/small.py
-```
-
-Make sure you have a `.env` file with a valid API key and have run `uv run maturin develop` first.
-
 ## Testing
 
 ### Rust Tests
